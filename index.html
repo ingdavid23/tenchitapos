@@ -184,22 +184,21 @@
      </div>
     </div>
     <div class="space-y-4 mb-6">
-       
         
-        <div class="space-y-4 mb-6">
-            <div>
-             <label class="block text-sm text-muted mb-1">Monto a cobrar</label>
-             <input id="pay-amount-to-collect" type="number" class="w-full bg-card border border-card rounded-xl px-4 py-3 text-xl font-bold focus:outline-none" disabled>
-            </div>
-            <div>
-             <label class="block text-sm text-muted mb-1">¿Con cuánto efectivo paga el cliente?</label>
-             <input id="pay-cash-received" type="number" step="0.01" class="w-full bg-card border-2 border-success/40 rounded-xl px-4 py-3 text-xl font-bold focus:border-success focus:outline-none" placeholder="0">
-            </div>
-            <div class="text-center pt-2">
-             <div class="text-sm text-muted">Su cambio:</div>
-             <div id="pay-change-returned" class="text-4xl font-extrabold text-success">$0.00</div>
-            </div>
-           </div>
+        
+        <div>
+         <label class="block text-sm text-muted mb-1">Monto a cobrar</label>
+         <input id="pay-amount-to-collect" type="number" class="w-full bg-card border border-card rounded-xl px-4 py-3 text-xl font-bold focus:outline-none" disabled>
+        </div>
+        <div>
+         <label class="block text-sm text-muted mb-1">¿Con cuánto efectivo paga el cliente?</label>
+         <input id="pay-cash-received" type="number" step="0.01" class="w-full bg-card border-2 border-success/40 rounded-xl px-4 py-3 text-xl font-bold focus:border-success focus:outline-none" placeholder="0">
+        </div>
+        <div class="text-center pt-2">
+         <div class="text-sm text-muted">Su cambio:</div>
+         <div id="pay-change-returned" class="text-4xl font-extrabold text-success">$0.00</div>
+        </div>
+       </div>
     <div class="flex gap-3 justify-center">
      <button type="button" id="pay-cancel" class="px-6 py-3 rounded-lg bg-card text-muted hover:bg-bg transition font-semibold">Cancelar</button> 
      <button type="button" id="pay-confirm" class="px-6 py-3 rounded-lg bg-warn text-bg font-bold hover:opacity-90 transition disabled:opacity-50 disabled:cursor-not-allowed" disabled>PAGAR</button>
@@ -618,7 +617,8 @@ document.getElementById('bulk-form').onsubmit = (e) => {
     sell_price: price,
     buy_price: 0,
     qty: 1,
-    maxStock: 999999 
+    maxStock: 999999,
+    category: 'Granel' // <-- NUEVO
   });
 
   // 2. Agregar el único empaque seleccionado al carrito con precio $0
@@ -629,13 +629,14 @@ document.getElementById('bulk-form').onsubmit = (e) => {
          if(existing) {
              existing.qty++;
          } else {
-             cart.push({
+            cart.push({
                 id: bm.id,
                 name: `Empaque: ${bm.name}`,
-                sell_price: 0, // No se cobra, pero Firebase descontará el stock
+                sell_price: 0, 
                 buy_price: 0,
                 qty: 1,
-                maxStock: bm.stock
+                maxStock: bm.stock,
+                category: 'Empaque' // <-- NUEVO
              });
          }
      }
@@ -2411,10 +2412,10 @@ async function renderFinance(container) {
 
   lucide.createIcons();
 }
-
-// ========== DEPARTAMENTOS ==========
+// ========== DEPARTAMENTOS Y CATEGORÍAS ==========
 window.deptDate = window.deptDate || new Date(); 
 window.editingDeptId = null;       
+window.editingDeptOldName = '';    
 
 async function renderDepartments(container) {
   container.innerHTML = `<div class="flex flex-col items-center justify-center h-64 text-muted fade-in"><i data-lucide="loader" class="w-8 h-8 animate-spin text-accent mb-4"></i><p class="font-semibold text-sm">Cargando datos...</p></div>`;
@@ -2425,8 +2426,8 @@ async function renderDepartments(container) {
   await window.cargarMesFirebase(y, m);
 
   const depts = records('department');
+  const categories = records('category');
   const sales = records('sale');
-  const allCategories = records('category'); // Traemos las categorías
 
   const targetSales = sales.filter(s => {
     if (!s.date) return false;
@@ -2434,41 +2435,40 @@ async function renderDepartments(container) {
     return d.getFullYear() === y && d.getMonth() === m && d.getDate() === window.deptDate.getDate();
   });
 
-  // 1. Mapeo rápido: Saber qué categoría pertenece a qué departamento
-  const catToDept = {};
-  depts.forEach(d => {
-    if (d.categories && Array.isArray(d.categories)) {
-      d.categories.forEach(c => {
-        catToDept[c] = d.name; // Ej: catToDept['Lácteos'] = 'Abarrotes'
-      });
-    }
-  });
-
   const deptTotals = {};
   depts.forEach(d => deptTotals[d.name] = 0);
   deptTotals['Sin departamento'] = 0;
 
-  // 2. Desglosar las ventas producto por producto
+  const catTotals = {};
+  categories.forEach(c => catTotals[c.name] = 0);
+  catTotals['General'] = 0;
+  catTotals['Granel'] = 0;
+  catTotals['Empaque'] = 0;
+
   targetSales.forEach(s => {
+    // 1. Cálculo Histórico por Departamento
+    const dName = s.department || 'Sin departamento';
+    if (deptTotals[dName] !== undefined) {
+      deptTotals[dName] += (s.total || 0);
+    } else {
+      deptTotals[dName] = (s.total || 0); 
+    }
+
+    // 2. Nuevo Cálculo por Categoría
     const items = s.items ? s.items : [s];
-    
     items.forEach(item => {
-      // Intentamos obtener la categoría del ítem o del catálogo
-      let itemCat = item.category;
-      if (!itemCat) {
-        const prod = allRecords.find(p => p.type === 'product' && (p.id === item.id || p.name === item.name));
-        itemCat = prod ? prod.category : 'General';
-      }
+       // Buscar categoría, si es un ticket viejo sin categoría, buscar en inventario
+       let cName = item.category;
+       if (!cName) {
+           const prodRef = allRecords.find(r => r.type === 'product' && (r.id === item.id || r.name === item.name));
+           cName = prodRef ? (prodRef.category || 'General') : 'General';
+       }
 
-      // Vemos quién es el dueño de esa categoría
-      const dName = catToDept[itemCat] || 'Sin departamento';
-      const itemTotal = Number(item.total) || (Number(item.sell_price) * Number(item.quantity || 1)) || 0;
-
-      if (deptTotals[dName] !== undefined) {
-        deptTotals[dName] += itemTotal;
-      } else {
-        deptTotals[dName] = itemTotal;
-      }
+       if (catTotals[cName] !== undefined) {
+         catTotals[cName] += (Number(item.total) || 0);
+       } else {
+         catTotals[cName] = (Number(item.total) || 0);
+       }
     });
   });
 
@@ -2479,7 +2479,7 @@ async function renderDepartments(container) {
   container.innerHTML = `
   <div class="fade-in space-y-6 pb-10">
     <div class="flex flex-wrap items-center justify-between gap-3">
-      <h2 class="text-xl font-bold">Gestión de Departamentos</h2>
+      <h2 class="text-xl font-bold">Gestión de Ingresos</h2>
       <div class="flex items-center gap-1 bg-surface border border-card rounded-lg p-1 shadow-sm">
         <button type="button" id="dept-prev" class="p-1.5 hover:bg-card rounded transition text-muted hover:text-txt"><i data-lucide="chevron-left" class="w-5 h-5"></i></button>
         <div class="text-sm font-bold w-36 text-center uppercase tracking-wider text-accent">
@@ -2489,73 +2489,71 @@ async function renderDepartments(container) {
       </div>
     </div>
     
-    <div class="grid lg:grid-cols-3 gap-6">
+    <div class="grid lg:grid-cols-3 gap-6 items-start">
       
-      <div class="bg-surface rounded-xl p-5 border border-card shadow-sm h-fit sticky top-4">
-        <h3 id="dept-form-title" class="font-semibold mb-4 flex items-center gap-2"><i data-lucide="building-2" class="w-4 h-4 text-accent"></i> Nuevo Departamento</h3>
-        <div class="flex flex-col gap-3">
-          <input id="new-dept-name" class="bg-card border border-card rounded-lg px-3 py-2 text-sm focus:border-accent focus:outline-none font-bold" placeholder="Nombre del departamento">
-          
-          <div class="mt-2">
-            <label class="block text-xs font-bold text-muted mb-2">Asignar Categorías:</label>
-            <div class="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto bg-card/20 p-2 rounded-lg border border-card/50">
-              ${allCategories.map(c => `
-                <label class="flex items-center gap-2 text-sm cursor-pointer hover:bg-card/40 p-1 rounded transition">
-                  <input type="checkbox" name="dept-cats" value="${c.name}" class="w-4 h-4 text-accent border-card rounded focus:ring-accent cursor-pointer">
-                  <span class="truncate" title="${c.name}">${c.name}</span>
-                </label>
-              `).join('') || '<span class="text-xs text-muted col-span-2 text-center py-2">No tienes categorías en tu inventario</span>'}
+      <div class="flex flex-col gap-6">
+          <div class="bg-surface rounded-xl p-5 border border-card shadow-sm">
+            <h3 id="dept-form-title" class="font-semibold mb-4 flex items-center gap-2"><i data-lucide="building-2" class="w-4 h-4 text-accent"></i> Nuevo Departamento</h3>
+            <div class="flex flex-col gap-3">
+              <input id="new-dept-name" class="bg-card border border-card rounded-lg px-3 py-2 text-sm focus:border-accent focus:outline-none" placeholder="Ej: Abarrotes, Carnes, Farmacia...">
+              <div class="flex gap-2 mt-1">
+                <button id="add-dept-btn" class="bg-accent text-white font-bold px-4 py-2.5 rounded-lg hover:opacity-90 transition text-sm flex-1">Guardar</button>
+                <button id="cancel-dept-btn" class="bg-card text-muted px-4 py-2.5 rounded-lg hover:bg-surface transition text-sm hidden" title="Cancelar edición">Cancelar</button>
+              </div>
             </div>
           </div>
 
-          <div class="flex gap-2 mt-2">
-            <button id="add-dept-btn" class="bg-accent text-white font-bold px-4 py-2.5 rounded-lg hover:opacity-90 transition text-sm flex-1">Guardar Departamento</button>
-            <button id="cancel-dept-btn" class="bg-card text-muted px-4 py-2.5 rounded-lg hover:bg-surface transition text-sm hidden" title="Cancelar edición">Cancelar</button>
+          <div class="bg-surface rounded-xl border border-card overflow-hidden shadow-sm">
+            <div class="p-4 border-b border-card font-bold text-sm text-muted">Ingreso Histórico por Depto.</div>
+            <table class="w-full text-sm">
+              <tbody>
+                ${depts.map(d => `
+                  <tr class="border-b border-card/50 hover:bg-card/30 transition">
+                    <td class="p-3 font-medium flex items-center gap-2"><i data-lucide="building" class="w-4 h-4 text-muted"></i> ${d.name}</td>
+                    <td class="p-3 text-right font-bold text-success">${currency(deptTotals[d.name])}</td>
+                    <td class="p-3 text-center w-20">
+                      <div class="flex justify-center gap-2">
+                        <button type="button" onclick="window.editDepartment('${d.id}')" class="p-1.5 bg-accent/10 text-accent rounded hover:bg-accent/20 transition"><i data-lucide="edit-2" class="w-3.5 h-3.5 pointer-events-none"></i></button>
+                        <button type="button" onclick="window.deleteDepartment('${d.id}', '${d.name}')" class="p-1.5 bg-danger/10 text-danger rounded hover:bg-danger/20 transition"><i data-lucide="trash-2" class="w-3.5 h-3.5 pointer-events-none"></i></button>
+                      </div>
+                    </td>
+                  </tr>
+                `).join('')}
+                <tr class="bg-card/10">
+                  <td class="p-3 font-medium text-muted">Sin departamento</td>
+                  <td class="p-3 text-right font-bold text-muted">${currency(deptTotals['Sin departamento'])}</td>
+                  <td class="p-3"></td>
+                </tr>
+              </tbody>
+            </table>
           </div>
-        </div>
       </div>
 
       <div class="lg:col-span-2 bg-surface rounded-xl border border-card overflow-hidden shadow-sm">
-        <div class="p-4 border-b border-card font-bold text-sm text-muted flex items-center justify-between">
-          <span>Ventas Diarias Desglosadas</span>
+        <div class="p-4 border-b border-card font-bold text-sm flex items-center gap-2 text-accent2">
+          <i data-lucide="tags" class="w-5 h-5"></i> Ingresos Diarios por Categoría
         </div>
         <table class="w-full text-sm">
           <thead>
             <tr class="text-muted text-left border-b border-card bg-card/20">
-              <th class="p-3">Departamento</th>
-              <th class="p-3">Categorías Asignadas</th>
-              <th class="p-3 text-right">Vendido</th>
-              <th class="p-3 text-center">Acciones</th>
+              <th class="p-3">Categoría</th>
+              <th class="p-3 text-right">Total Vendido</th>
             </tr>
           </thead>
           <tbody>
-            ${depts.map(d => `
+            ${Object.keys(catTotals)
+                .filter(k => catTotals[k] > 0 || categories.some(c => c.name === k))
+                .sort((a, b) => catTotals[b] - catTotals[a]) // Ordena de mayor a menor ingreso
+                .map(catName => `
               <tr class="border-b border-card/50 hover:bg-card/30 transition">
-                <td class="p-3 font-bold flex items-center gap-2"><i data-lucide="building" class="w-4 h-4 text-muted"></i> ${d.name}</td>
-                <td class="p-3 text-xs text-muted max-w-[150px] truncate" title="${(d.categories || []).join(', ')}">
-                  ${(d.categories || []).length > 0 ? (d.categories || []).join(', ') : '<span class="text-warn/60 italic">Sin categorías</span>'}
-                </td>
-                <td class="p-3 text-right font-black text-success">${currency(deptTotals[d.name])}</td>
-                <td class="p-3 text-center">
-                  <div class="flex justify-center gap-2">
-                    <button type="button" onclick="window.editDepartment('${d.id}')" class="p-2 bg-accent/10 text-accent rounded hover:bg-accent/20 transition" title="Editar Categorías">
-                      <i data-lucide="edit-2" class="w-4 h-4 pointer-events-none"></i>
-                    </button>
-                    <button type="button" onclick="window.deleteDepartment('${d.id}', '${d.name}')" class="p-2 bg-danger/10 text-danger rounded hover:bg-danger/20 transition" title="Eliminar">
-                      <i data-lucide="trash-2" class="w-4 h-4 pointer-events-none"></i>
-                    </button>
-                  </div>
-                </td>
+                <td class="p-3 font-medium flex items-center gap-2"><i data-lucide="tag" class="w-4 h-4 text-muted"></i> ${catName}</td>
+                <td class="p-3 text-right font-bold text-success text-base">${currency(catTotals[catName])}</td>
               </tr>
             `).join('')}
-            <tr class="bg-card/10 border-t-2 border-card">
-              <td class="p-3 font-medium text-muted" colspan="2">Ventas sin categoría o General</td>
-              <td class="p-3 text-right font-bold text-muted">${currency(deptTotals['Sin departamento'])}</td>
-              <td class="p-3"></td>
-            </tr>
           </tbody>
         </table>
       </div>
+
     </div>
   </div>`;
 
@@ -2582,29 +2580,24 @@ async function renderDepartments(container) {
     const dept = depts.find(d => d.id === id);
     if (dept) {
       window.editingDeptId = dept.id;
+      window.editingDeptOldName = dept.name;
       
       document.getElementById('new-dept-name').value = dept.name;
       document.getElementById('new-dept-name').focus();
       
-      // Marcar los checkboxes que tiene guardados
-      const checkboxes = document.querySelectorAll('input[name="dept-cats"]');
-      checkboxes.forEach(cb => {
-        cb.checked = (dept.categories || []).includes(cb.value);
-      });
-      
       const btn = document.getElementById('add-dept-btn');
       btn.textContent = 'Actualizar';
-      btn.classList.replace('bg-accent', 'bg-warn');
+      btn.classList.replace('bg-accent', 'bg-warn'); 
       
       document.getElementById('cancel-dept-btn').classList.remove('hidden');
       document.getElementById('dept-form-title').innerHTML = '<i data-lucide="edit-3" class="w-4 h-4 text-warn"></i> Editar Departamento';
       lucide.createIcons();
-      window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
 
   document.getElementById('cancel-dept-btn').onclick = () => {
     window.editingDeptId = null;
+    window.editingDeptOldName = '';
     renderDepartments(container);
   };
 
@@ -2612,9 +2605,6 @@ async function renderDepartments(container) {
     const name = document.getElementById('new-dept-name').value.trim();
     if (!name) return showToast('Escribe el nombre del departamento', 'warn');
     
-    // Obtenemos todas las categorías seleccionadas
-    const selectedCats = Array.from(document.querySelectorAll('input[name="dept-cats"]:checked')).map(cb => cb.value);
-
     const btn = document.getElementById('add-dept-btn');
     btn.disabled = true; 
     btn.textContent = 'Guardando...';
@@ -2627,9 +2617,13 @@ async function renderDepartments(container) {
           return;
         }
 
-        // Actualizamos nombre Y categorías
-        await dbSdk.update({ type: 'department', id: window.editingDeptId, name: name, categories: selectedCats });
-        showToast('Departamento actualizado', 'success');
+        await dbSdk.update({ type: 'department', id: window.editingDeptId, name: name });
+        
+        const salesToUpdate = sales.filter(s => s.department === window.editingDeptOldName);
+        for(const s of salesToUpdate) {
+          await dbSdk.update({ ...s, department: name });
+        }
+        showToast('Departamento y ventas actualizadas', 'success');
 
       } else {
         if (depts.some(d => d.name.toLowerCase() === name.toLowerCase())) {
@@ -2637,7 +2631,7 @@ async function renderDepartments(container) {
           btn.disabled = false;
           return;
         }
-        await dbSdk.create({ type: 'department', name, categories: selectedCats, date: now() });
+        await dbSdk.create({ type: 'department', name, date: now() });
         showToast('Departamento creado exitosamente');
       }
     } catch(err) {
@@ -2646,11 +2640,12 @@ async function renderDepartments(container) {
     }
 
     window.editingDeptId = null;
+    window.editingDeptOldName = '';
     renderDepartments(container);
   };
 
   window.deleteDepartment = (id, name) => {
-    showConfirm(`¿Borrar el departamento "${name}"?`, async () => {
+    showConfirm(`¿Borrar el departamento "${name}"? Las ventas anteriores se quedarán "Sin departamento".`, async () => {
       await dbSdk.delete({ type: 'department', id });
       showToast('Departamento eliminado');
       renderDepartments(container);
@@ -3125,18 +3120,19 @@ function renderCashierPOS() {
     renderProducts();
     renderCartItems();
 
-    // === NUEVO: Scroll horizontal con la rueda del ratón para Categorías ===
-    const catContainer = document.getElementById('pos-categories');
-    if (catContainer) {
-      catContainer.addEventListener('wheel', (e) => {
-        // Si hay movimiento en la rueda
-        if (e.deltaY !== 0) {
-          e.preventDefault(); // Evita que toda la página haga scroll hacia abajo
-          catContainer.scrollLeft += e.deltaY; // Traslada ese movimiento al eje X (izquierda/derecha)
-        }
-      }, { passive: false }); // passive: false es necesario para que funcione el preventDefault
-    }
-    // =======================================================================
+    // === AQUÍ PEGAS LA NUEVA FUNCIÓN ===
+    window.updateCashBadge = () => {
+      if (!sessionStart) return;
+      // Calcula las ventas más recientes directamente de la base de datos
+      const liveSales = records('sale').filter(s => s.cashier === (currentUser?.username||'') && s.date >= sessionStart);
+      const liveCash = liveSales.filter(s=>s.payment_method==='Efectivo').reduce((a,s)=>a+(s.total||0),0);
+      
+      const badge = document.getElementById('top-cash-badge');
+      if (badge) {
+        badge.innerHTML = `<i data-lucide="wallet" class="w-3 h-3"></i> ${currency(initialCash + liveCash)}`;
+        lucide.createIcons();
+      }
+    };
 
     const posSearch = document.getElementById('pos-search');
 
@@ -3161,7 +3157,8 @@ function renderCashierPOS() {
                 showToast('Sin stock suficiente', 'warn');
               }
             } else {
-                cart.push({ id: prod.id, name: prod.name, category: prod.category || 'General', sell_price: prod.sell_price, buy_price: prod.buy_price||0, qty: 1, maxStock: prod.stock });
+              // 👇 AQUÍ ESTÁ LA LÍNEA CORREGIDA CON LA CATEGORÍA 👇
+              cart.push({ id: product.id, name: product.name, sell_price: product.sell_price, buy_price: product.buy_price || 0, qty: 1, maxStock: product.stock, category: product.category || 'General' });
               showToast(`${product.name} añadido`);
             }
             posSearch.value = ''; 
@@ -3176,7 +3173,6 @@ function renderCashierPOS() {
         }
       }
     });
-
     posSearch.addEventListener('input', () => { renderProducts(); });
 
     document.querySelectorAll('[data-pay]').forEach(b => {
@@ -3270,7 +3266,7 @@ function renderCashierPOS() {
         </div>
       </button>`).join('') || `<div class="col-span-full text-center text-muted py-8 text-sm font-medium">No se encontraron productos en esta categoría</div>`;
 
-    lucide.createIcons();
+      lucide.createIcons();
     container.querySelectorAll('[data-add-prod]').forEach(btn => {
       btn.onclick = () => {
         const prod = allRecords.find(p => p.id === btn.dataset.addProd);
@@ -3280,13 +3276,13 @@ function renderCashierPOS() {
           if (existing.qty < prod.stock) existing.qty++;
           else showToast('Stock insuficiente', 'warn');
         } else {
-          cart.push({ id: prod.id, name: prod.name, sell_price: prod.sell_price, buy_price: prod.buy_price||0, qty: 1, maxStock: prod.stock });
+          // 👇 REEMPLAZA ESTA LÍNEA 👇
+          cart.push({ id: prod.id, name: prod.name, sell_price: prod.sell_price, buy_price: prod.buy_price||0, qty: 1, maxStock: prod.stock, category: prod.category || 'General' });
         }
         renderPOSView();
       };
     });
-  }
-
+  } // <-- Fin de la función renderProducts
   function renderCartItems() {
     const container = document.getElementById('cart-items');
     if (!container) return;
@@ -3348,12 +3344,9 @@ function renderCashierPOS() {
     if (!cart.length) return;
     const total = cartTotal();
     
-    // --> INICIO DE CÓDIGO NUEVO
-   
-    // --> FIN DE CÓDIGO NUEVO
+    // Ya NO buscamos pay-department aquí
 
     document.getElementById('payment-total').textContent = currency(total);
-    // ... sigue el código original
     document.getElementById('payment-remaining').textContent = currency(total);
     document.getElementById('payment-paid').textContent = currency(0);
     document.getElementById('pay-amount-to-collect').value = total;
@@ -3414,31 +3407,28 @@ function renderCashierPOS() {
         }
       }
 
-    // 2. AGRUPAR TODO EN UN SOLO TICKET (1 sola escritura)
-    const selectedDept = document.getElementById('pay-department').value; // <-- Leemos el select
-
-// 2. AGRUPAR TODO EN UN SOLO TICKET (1 sola escritura)
-const newTicket = {
-        type: 'sale',
-        ticket_num: ticketNum,
-        cashier: currentUser?.username || 'cajero',
-        date: now(),
-        total: total, 
-        order_total: total,
-        payment_method: paymentMethod,
-        cash_received: cashReceived,
-        change_returned: cashReceived - total,
-        status: 'completed',
-        items: cart.map(item => ({
-          id: item.id,
-          name: item.name,
-          category: item.category || 'General', // <-- Guardamos la categoría aquí
-          quantity: item.qty,
-          sell_price: item.sell_price,
-          buy_price: item.buy_price || 0,
-          total: item.sell_price * item.qty
-        }))
-      };
+    // 2. AGRUPAR TODO EN UN SOLO TICKET
+    const newTicket = {
+      type: 'sale',
+      ticket_num: ticketNum,
+      cashier: currentUser?.username || 'cajero',
+      date: now(),
+      total: total, 
+      order_total: total,
+      payment_method: paymentMethod,
+      cash_received: cashReceived,
+      change_returned: cashReceived - total,
+      status: 'completed',
+      items: cart.map(item => ({
+        id: item.id,
+        name: item.name,
+        quantity: item.qty,
+        sell_price: item.sell_price,
+        buy_price: item.buy_price || 0,
+        total: item.sell_price * item.qty,
+        category: item.category || 'General' // <-- Agregamos la categoría aquí
+      }))
+    };
       // Guardar en Firebase y en RAM local
       dbSdk.create(newTicket);
       allRecords.push({...newTicket, id: 'temp_' + genId()});
@@ -3518,7 +3508,6 @@ const newTicket = {
       waContainer.style.display = 'block'; 
       waInput.value = ''; // Limpiar recuadro para nueva venta
 
-      // NUEVA LÍNEA: Quita la expansión para que quepan los dos botones
       document.getElementById('btn-print-ticket').classList.remove('col-span-2');
       const waText = `*${bizName()}*\n` +
         `TICKET DE VENTA\n` +
@@ -3534,14 +3523,10 @@ const newTicket = {
         `¡GRACIAS POR SU COMPRA!`;
 
       btnWa.onclick = () => {
-        // Leemos el valor directo del input (sin usar prompt)
         const cleanNumber = waInput.value.replace(/\D/g, '');
-        
-        // Generamos la URL. Al ser un clic directo, el navegador no lo bloquea.
         const url = cleanNumber 
           ? `https://api.whatsapp.com/send?phone=${cleanNumber}&text=${encodeURIComponent(waText)}` 
           : `https://api.whatsapp.com/send?text=${encodeURIComponent(waText)}`;
-        
         window.open(url, '_blank');
       };
       // ==============================================
@@ -3562,7 +3547,6 @@ const newTicket = {
       btnConfirm.disabled = false; 
     }
   }
-
   function renderCashierHistory() {
     const mySales = records('sale').filter(s => s.cashier === (currentUser?.username||''));
     const todayMySales = mySales.filter(s => sessionStart && s.date >= sessionStart);
