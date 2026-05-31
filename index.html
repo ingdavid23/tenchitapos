@@ -1914,6 +1914,15 @@ async function renderSalesReport(container) {
   });
   // ===================================================
 
+  // === NUEVO: FILTRAR TICKETS PARA LA TABLA SEGÚN EL DÍA SELECCIONADO ===
+  const specificDayGroupedSales = groupedSales.filter(t => {
+    if(!t.date) return false;
+    const d = new Date(t.date);
+    const localDateString = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    return localDateString === window.reportSpecificDate;
+  });
+  // ======================================================================
+
   container.innerHTML = `
   <div class="fade-in space-y-6 pb-10">
     <div class="flex flex-wrap items-center justify-between gap-3">
@@ -1967,13 +1976,13 @@ async function renderSalesReport(container) {
     </div>
     <div class="bg-surface rounded-xl border border-card overflow-x-auto shadow-sm">
       <div class="p-4 border-b border-card font-bold text-sm text-muted flex justify-between items-center">
-          <span>Historial de Tickets - ${monthName}</span>
-          <button id="export-sales-btn" class="bg-success/10 text-success text-[10px] px-2 py-1 rounded border border-success/20 hover:bg-success/20 uppercase font-bold transition">Exportar Excel</button>
+          <span>Historial de Tickets del Día (${window.reportSpecificDate})</span>
+          <button id="export-sales-btn" class="bg-success/10 text-success text-[10px] px-2 py-1 rounded border border-success/20 hover:bg-success/20 uppercase font-bold transition">Exportar Excel del Día</button>
       </div>
       <table class="w-full text-sm">
         <thead><tr class="text-muted text-left border-b border-card"><th class="p-3">Fecha</th><th class="p-3">Ticket</th><th class="p-3">Artículos</th><th class="p-3">Total</th><th class="p-3">Pago</th><th class="p-3">Cajero</th><th class="p-3 text-center">Acciones</th></tr></thead>
         <tbody>
-          ${groupedSales.map(t => `
+          ${specificDayGroupedSales.map(t => `
             <tr class="border-b border-card/50 hover:bg-card/30 transition">
               <td class="p-3 text-muted">${formatLocalTime(t.date)}</td>
               <td class="p-3 font-bold text-accent">#${t.ticket_num || 'S/N'}</td>
@@ -1993,7 +2002,7 @@ async function renderSalesReport(container) {
                   <i data-lucide="trash-2" class="w-4 h-4 pointer-events-none"></i>
                 </button>
               </td>
-            </tr>`).join('') || `<tr><td colspan="7" class="p-10 text-center text-muted">No hubo ventas en ${monthName}</td></tr>`}
+            </tr>`).join('') || `<tr><td colspan="7" class="p-10 text-center text-muted">No hubo ventas el ${window.reportSpecificDate}</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -2049,21 +2058,28 @@ async function renderSalesReport(container) {
   };
 
   document.getElementById('export-sales-btn').onclick = () => {
-      if(!filteredSales.length) return showToast('No hay datos para exportar', 'warn');
-      const data = filteredSales.map(s => ({
-          'Ticket': s.ticket_num || 'S/N',
-          'Fecha': formatLocalTime(s.date),
-          'Producto': s.name,
-          'Cantidad': s.quantity || 1,
-          'Total': s.total,
-          'Pago': s.payment_method || 'Efectivo',
-          'Cajero': s.cashier
-      }));
+      if(!specificDayGroupedSales.length) return showToast('No hay datos para exportar en este día', 'warn');
+      
+      const data = [];
+      specificDayGroupedSales.forEach(t => {
+         t.raw_sales.forEach(item => {
+            data.push({
+              'Ticket': t.ticket_num || 'S/N',
+              'Fecha': formatLocalTime(t.date),
+              'Producto': item.name,
+              'Cantidad': item.quantity || 1,
+              'Total': item.total || (item.sell_price * (item.quantity||1)),
+              'Pago': t.payment_method || 'Efectivo',
+              'Cajero': t.cashier
+            });
+         });
+      });
+
       const ws = XLSX.utils.json_to_sheet(data);
       const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "Ventas_" + monthName);
-      XLSX.writeFile(wb, `Reporte_Ventas_${monthName}_${y}.xlsx`);
-      showToast('Excel del mes descargado');
+      XLSX.utils.book_append_sheet(wb, ws, "Ventas");
+      XLSX.writeFile(wb, `Reporte_Ventas_${window.reportSpecificDate}.xlsx`);
+      showToast('Excel del día descargado');
   };
 
   // Interceptores de clic (Eliminar / Ver Ticket / Revertir Movimiento)
